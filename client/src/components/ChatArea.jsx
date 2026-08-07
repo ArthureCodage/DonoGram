@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Phone, Video, MoreVertical, CheckCheck, Play, Pause, Download, Volume2, Bell, Pin, Search, Trash2, User, Image as ImageIcon, Edit2 } from 'lucide-react';
+import { ArrowLeft, Phone, Video, MoreVertical, CheckCheck, Play, Pause, Download, Volume2, Bell, Pin, Search, Trash2, User, Image as ImageIcon, Share2 } from 'lucide-react';
 import MessageInput from './MessageInput';
 import CallModal from './CallModal';
 import SharedMediaDrawer from './SharedMediaDrawer';
@@ -16,6 +16,7 @@ export default function ChatArea({
   onTypingStop,
   onToggleReaction,
   onBackMobile,
+  onTriggerForward,
   serverUrl,
   token
 }) {
@@ -475,12 +476,13 @@ export default function ChatArea({
                     </div>
                   )}
 
+                  {/* Message Reactions & Actions Bar */}
                   <div style={{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     marginTop: '0.35rem',
-                    gap: '1rem'
+                    gap: '0.75rem'
                   }}>
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                       {['❤️', '👍', '🔥', '😂'].map(emoji => {
@@ -508,9 +510,25 @@ export default function ChatArea({
                       opacity: 0.75,
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '4px',
+                      gap: '6px',
                       marginLeft: 'auto'
                     }}>
+                      <button
+                        onClick={() => onTriggerForward(msg)}
+                        title="Transférer ce message"
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'inherit',
+                          opacity: 0.7,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: 0
+                        }}
+                      >
+                        <Share2 size={13} />
+                      </button>
                       <span>{formatTime(msg.created_at)}</span>
                       {isMe && <CheckCheck size={14} color="#60a5fa" />}
                     </div>

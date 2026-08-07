@@ -9,6 +9,8 @@ import ProfileModal from './components/ProfileModal';
 import MobileTabBar from './components/MobileTabBar';
 import ContactsView from './components/ContactsView';
 import ChannelsView from './components/ChannelsView';
+import ForwardModal from './components/ForwardModal';
+import { soundFX } from './utils/soundEffects';
 
 const host = window.location.hostname || 'localhost';
 const SERVER_URL = `http://${host}:4000`;
@@ -30,6 +32,7 @@ export default function App() {
   const [typingUser, setTypingUser] = useState(null);
   const [networkInfo, setNetworkInfo] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
+  const [forwardingMessage, setForwardingMessage] = useState(null);
 
   // Modals state
   const [showQrModal, setShowQrModal] = useState(false);
@@ -61,6 +64,11 @@ export default function App() {
         if (prev.find(m => m.id === newMsg.id)) return prev;
         return [...prev, newMsg];
       });
+
+      // Play audio chime if received from someone else
+      if (newMsg.sender_id !== currentUser.id) {
+        soundFX.playMessageReceived();
+      }
     });
 
     socket.on('user_typing', ({ conversation_id, username, isTyping }) => {
@@ -184,6 +192,7 @@ export default function App() {
 
   const handleSendMessage = (text) => {
     if (!socket || !currentUser || !activeChatId) return;
+    soundFX.playMessageSent();
     socket.emit('send_message', {
       conversation_id: activeChatId,
       sender_id: currentUser.id,
@@ -194,11 +203,28 @@ export default function App() {
 
   const handleSendFile = (fileData) => {
     if (!socket || !currentUser || !activeChatId) return;
+    soundFX.playMessageSent();
     socket.emit('send_message', {
       conversation_id: activeChatId,
       sender_id: currentUser.id,
       ...fileData
     });
+  };
+
+  const handleForwardMessage = (targetChatId, messageToForward) => {
+    if (!socket || !currentUser) return;
+    soundFX.playMessageSent();
+    socket.emit('send_message', {
+      conversation_id: targetChatId,
+      sender_id: currentUser.id,
+      text: `↪️ Transféré de ${messageToForward.sender_name}:\n${messageToForward.text || ''}`,
+      type: messageToForward.type,
+      media_url: messageToForward.media_url,
+      media_name: messageToForward.media_name,
+      media_size: messageToForward.media_size
+    });
+    setForwardingMessage(null);
+    showToast('Message transféré avec succès !');
   };
 
   const handleTypingStart = () => {
@@ -242,7 +268,7 @@ export default function App() {
           top: 'calc(20px + env(safe-area-inset-top))',
           left: '50%',
           transform: 'translateX(-50%)',
-          backgroundColor: 'rgba(239, 68, 68, 0.95)',
+          backgroundColor: 'rgba(82, 136, 193, 0.95)',
           color: '#ffffff',
           padding: '0.75rem 1.25rem',
           borderRadius: '20px',
@@ -310,12 +336,14 @@ export default function App() {
             onTypingStop={handleTypingStop}
             onToggleReaction={handleToggleReaction}
             onBackMobile={() => setIsMobileChatOpen(false)}
+            onTriggerForward={(msg) => setForwardingMessage(msg)}
             serverUrl={SERVER_URL}
+            token={token}
           />
         </>
       )}
 
-      {/* Mobile Bottom Navigation Tab Bar (Only visible when NOT inside an active mobile chat) */}
+      {/* Mobile Bottom Navigation Tab Bar */}
       {currentUser && token && !isMobileChatOpen && (
         <MobileTabBar
           activeTab={activeTab}
@@ -328,6 +356,15 @@ export default function App() {
       )}
 
       {/* Modals */}
+      {forwardingMessage && (
+        <ForwardModal
+          message={forwardingMessage}
+          chats={chats}
+          onClose={() => setForwardingMessage(null)}
+          onForward={handleForwardMessage}
+        />
+      )}
+
       {showQrModal && (
         <QRCodeModal
           networkInfo={networkInfo}
