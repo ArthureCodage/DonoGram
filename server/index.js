@@ -62,6 +62,21 @@ function authenticateToken(req, res, next) {
   });
 }
 
+// Ensure Saved Messages Room Exists for User
+async function ensureSavedMessagesRoom(userId) {
+  const savedId = 'saved_' + userId;
+  const exists = await db.get('SELECT id FROM conversations WHERE id = ?', [savedId]);
+  if (!exists) {
+    await db.run(
+      `INSERT INTO conversations (id, type, name, description, avatar_url, created_by, is_public)
+       VALUES (?, 'saved', 'Messages Enregistrés', 'Votre nuage personnel pour conserver notes et fichiers', 'https://api.dicebear.com/7.x/identicon/svg?seed=SavedCloud', ?, 0)`,
+      [savedId, userId]
+    );
+    await db.run(`INSERT INTO conversation_members (conversation_id, user_id) VALUES (?, ?)`, [savedId, userId]);
+  }
+  return savedId;
+}
+
 // ----------------------------------------------------
 // API ROUTES
 // ----------------------------------------------------
@@ -114,6 +129,7 @@ app.post('/api/auth/register', async (req, res) => {
     );
 
     await db.run(`INSERT OR IGNORE INTO conversation_members (conversation_id, user_id) VALUES ('general', ?), ('annonces', ?)`, [userId, userId]);
+    await ensureSavedMessagesRoom(userId);
 
     const newUser = await db.get('SELECT id, username, display_name, avatar_url, bio, status FROM users WHERE id = ?', [userId]);
     const token = jwt.sign({ id: newUser.id, username: newUser.username }, JWT_SECRET, { expiresIn: '30d' });
@@ -145,6 +161,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     await db.run('UPDATE users SET status = "online", last_seen = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+    await ensureSavedMessagesRoom(user.id);
     
     const safeUser = {
       id: user.id,
@@ -185,6 +202,24 @@ app.post('/api/users/update', authenticateToken, async (req, res) => {
     res.json({ user: updatedUser });
   } catch (err) {
     res.status(500).json({ error: 'Erreur mise à jour' });
+  }
+});
+
+// Shared Media Drawer Endpoint
+app.get('/api/chats/:chatId/media', authenticateToken, async (req, res) => {
+  const { chatId } = req.params;
+  try {
+    const mediaMessages = await db.all(`
+      SELECT m.*, u.display_name as sender_name
+      FROM messages m
+      JOIN users u ON m.sender_id = u.id
+      WHERE m.conversation_id = ? AND (m.type = 'image' OR m.type = 'file' OR m.type = 'audio')
+      ORDER BY m.created_at DESC
+    `, [chatId]);
+
+    res.json({ media: mediaMessages });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur médias partagés' });
   }
 });
 
@@ -326,7 +361,7 @@ app.post('/api/chats/create', authenticateToken, async (req, res) => {
 
       chatId = 'dm_' + Date.now();
       await db.run(`INSERT INTO conversations (id, type, created_by) VALUES (?, 'direct', ?)`, [chatId, created_by]);
-      await db.run(`INSERT INTO conversation_members (conversation_id, user_id) VALUES (?, ?), (?, ?)`, [chatId, created_by, chatId, target_user_id]);
+      await db.run(`INSERT INTO conversation_members (conversation_id, user_id) VALUES (?, ?), (?, ?)`, [chatId, created_by, target_user_id]);
     } else {
       chatId = (type === 'channel' ? 'ch_' : 'grp_') + Date.now();
       const avatarUrl = `https://api.dicebear.com/7.x/identicon/svg?seed=${name}`;
@@ -389,8 +424,54 @@ app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => 
 });
 
 // ----------------------------------------------------
-// SOCKET.IO REALTIME & WEBRTC SIGNALING
+// SOCKET.IO REALTIME & BOT COMMAND PROCESSOR
 // ----------------------------------------------------
+
+// Bot Response Handler
+async function handleBotCommands(conversation_id, user_id, text) {
+  const cleanText = text.trim();
+  const cmd = cleanText.toLowerCase();
+
+  let botReply = null;
+
+  if (cmd === '/help') {
+    botReply = '🤖 **Commandes DonoBot Disponibles** :\n• `/dice` : Lancer un dé 🎲\n• `/quote` : Citation inspirante 💡\n• `/qr` : Obtenir le QR Code de connexion mobile 📱\n• `/ip` : Afficher l\'adresse IP locale du serveur 🌐';
+  } else if (cmd === '/dice' || cmd === '🎲') {
+    const roll = Math.floor(Math.random() * 6) + 1;
+    botReply = `🎲 DonoBot a lancé le dé : **${roll}** !`;
+  } else if (cmd === '/quote') {
+    const quotes = [
+      '“La simplicité est la clé de la réussite.” — Steve Jobs',
+      '“Le meilleur moyen de prédire l’avenir est de le créer.” — Peter Drucker',
+      '“Code clean, thought clean.” — DonoGram',
+      '“La technologie au service de la liberté privée.”'
+    ];
+    botReply = `💡 ${quotes[Math.floor(Math.random() * quotes.length)]}`;
+  } else if (cmd === '/qr' || cmd === '/ip') {
+    const localIp = getLocalIp();
+    botReply = `📱 **DonoGram Network Server** :\n• IP locale : \`http://${localIp}:5173\`\n• Port backend : \`${PORT}\``;
+  }
+
+  if (botReply) {
+    setTimeout(async () => {
+      const msgId = 'msg_bot_' + Date.now();
+      await db.run(`
+        INSERT INTO messages (id, conversation_id, sender_id, text, type)
+        VALUES (?, ?, 'donobot', ?, 'text')
+      `, [msgId, conversation_id, botReply]);
+
+      const savedMsg = await db.get(`
+        SELECT m.*, u.display_name as sender_name, u.avatar_url as sender_avatar
+        FROM messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.id = ?
+      `, [msgId]);
+      savedMsg.reactions = [];
+
+      io.to(conversation_id).emit('new_message', savedMsg);
+    }, 600);
+  }
+}
 
 io.on('connection', (socket) => {
   socket.on('user_connected', async (userId) => {
@@ -435,12 +516,16 @@ io.on('connection', (socket) => {
 
       io.to(conversation_id).emit('new_message', savedMsg);
       io.emit('chat_updated', { conversation_id, last_message: savedMsg.text, last_message_at: savedMsg.created_at });
+
+      // Trigger bot command if text starts with '/'
+      if (text && text.startsWith('/')) {
+        handleBotCommands(conversation_id, sender_id, text);
+      }
     } catch (err) {
       console.error('Send message socket error:', err);
     }
   });
 
-  // Edit Message
   socket.on('edit_message', async ({ message_id, conversation_id, text }) => {
     try {
       await db.run('UPDATE messages SET text = ? WHERE id = ?', [text, message_id]);
@@ -450,13 +535,21 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Delete Message
   socket.on('delete_message', async ({ message_id, conversation_id }) => {
     try {
       await db.run('DELETE FROM messages WHERE id = ?', [message_id]);
       io.to(conversation_id).emit('message_deleted', { message_id });
     } catch (err) {
       console.error('Delete error:', err);
+    }
+  });
+
+  socket.on('pin_message', async ({ message_id, conversation_id, is_pinned }) => {
+    try {
+      await db.run('UPDATE messages SET is_pinned = ? WHERE id = ?', [is_pinned ? 1 : 0, message_id]);
+      io.to(conversation_id).emit('message_pinned_updated', { message_id, is_pinned });
+    } catch (err) {
+      console.error('Pin error:', err);
     }
   });
 
@@ -522,6 +615,6 @@ initDb().then((database) => {
 
   server.listen(PORT, '0.0.0.0', async () => {
     const localIp = getLocalIp();
-    console.log(`\n🚀 DONOGRAM v3.0 ADVANCED BACKEND RUNNING ON http://${localIp}:${PORT}\n`);
+    console.log(`\n🚀 DONOGRAM v3.5 ADVANCED BOT & CLOUD SERVER RUNNING ON http://${localIp}:${PORT}\n`);
   });
 }).catch((err) => console.error('DB error:', err));

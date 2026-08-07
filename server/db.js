@@ -42,7 +42,7 @@ async function initDb() {
 
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
-      type TEXT CHECK(type IN ('direct', 'group', 'channel')) NOT NULL DEFAULT 'direct',
+      type TEXT CHECK(type IN ('direct', 'group', 'channel', 'saved')) NOT NULL DEFAULT 'direct',
       name TEXT,
       description TEXT,
       avatar_url TEXT,
@@ -66,7 +66,7 @@ async function initDb() {
       conversation_id TEXT NOT NULL,
       sender_id TEXT NOT NULL,
       text TEXT,
-      type TEXT CHECK(type IN ('text', 'image', 'audio', 'file', 'system')) DEFAULT 'text',
+      type TEXT CHECK(type IN ('text', 'image', 'audio', 'file', 'system', 'sticker')) DEFAULT 'text',
       media_url TEXT,
       media_name TEXT,
       media_size INTEGER,
@@ -89,12 +89,13 @@ async function initDb() {
     );
   `);
 
-  // Migrate column if table existed previously without is_public
   try {
     await dbInstance.run('ALTER TABLE conversations ADD COLUMN is_public INTEGER DEFAULT 1;');
-  } catch (err) {
-    // Column already exists, safe to ignore
-  }
+  } catch (err) {}
+
+  try {
+    await dbInstance.run('ALTER TABLE messages ADD COLUMN is_pinned INTEGER DEFAULT 0;');
+  } catch (err) {}
 
   // Default bot user
   const botExists = await dbInstance.get('SELECT id FROM users WHERE id = ?', ['donobot']);
@@ -102,7 +103,7 @@ async function initDb() {
     const defaultBotPass = await bcrypt.hash('bot123', 10);
     await dbInstance.run(`
       INSERT INTO users (id, username, password, display_name, avatar_url, bio, status)
-      VALUES ('donobot', 'donobot', ?, 'DonoBot 🤖', 'https://api.dicebear.com/7.x/bottts/svg?seed=DonoBot', 'Votre assistant DonoGram auto-hébergé', 'online')
+      VALUES ('donobot', 'donobot', ?, 'DonoBot 🤖', 'https://api.dicebear.com/7.x/bottts/svg?seed=DonoBot', 'Votre assistant bot DonoGram intelligent', 'online')
     `, [defaultBotPass]);
   }
 
@@ -111,25 +112,12 @@ async function initDb() {
   if (!generalExists) {
     await dbInstance.run(`
       INSERT INTO conversations (id, type, name, description, avatar_url, created_by, is_public)
-      VALUES ('general', 'channel', '📢 Canal Général', 'Bienvenue sur DonoGram ! Canal de discussion principal.', 'https://api.dicebear.com/7.x/shapes/svg?seed=General', 'donobot', 1)
+      VALUES ('general', 'group', '📢 Canal Général', 'Bienvenue sur DonoGram ! Canal de discussion principal.', 'https://api.dicebear.com/7.x/shapes/svg?seed=General', 'donobot', 1)
     `);
 
     await dbInstance.run(`
       INSERT INTO messages (id, conversation_id, sender_id, text, type)
-      VALUES ('msg_welcome', 'general', 'donobot', '🚀 Bienvenue sur DonoGram !\n\nCréez votre compte, ajoutez vos contacts et découvrez vos canaux !', 'text')
-    `);
-  }
-
-  const newsExists = await dbInstance.get('SELECT id FROM conversations WHERE id = ?', ['annonces']);
-  if (!newsExists) {
-    await dbInstance.run(`
-      INSERT INTO conversations (id, type, name, description, avatar_url, created_by, is_public)
-      VALUES ('annonces', 'channel', '🔔 Nouveautés & Annonces', 'Fil d''annonces publiques DonoGram.', 'https://api.dicebear.com/7.x/shapes/svg?seed=News', 'donobot', 1)
-    `);
-
-    await dbInstance.run(`
-      INSERT INTO messages (id, conversation_id, sender_id, text, type)
-      VALUES ('msg_news_1', 'annonces', 'donobot', '✨ DonoGram v2.0 : Création de comptes sécurisés, carnet de contacts, canaux publics et optimisation iOS !', 'text')
+      VALUES ('msg_welcome', 'general', 'donobot', '🚀 Bienvenue sur DonoGram v3.5 !\n\nEssayez les commandes du bot : /help, /dice, /quote, /qr, /ip', 'text')
     `);
   }
 
