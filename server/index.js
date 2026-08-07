@@ -50,7 +50,6 @@ function getLocalIp() {
   return ip.address() || '127.0.0.1';
 }
 
-// Middleware: Authenticate JWT Token
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -114,7 +113,6 @@ app.post('/api/auth/register', async (req, res) => {
       [userId, cleanUsername, hashedPassword, name, avatarUrl]
     );
 
-    // Auto join default conversations
     await db.run(`INSERT OR IGNORE INTO conversation_members (conversation_id, user_id) VALUES ('general', ?), ('annonces', ?)`, [userId, userId]);
 
     const newUser = await db.get('SELECT id, username, display_name, avatar_url, bio, status FROM users WHERE id = ?', [userId]);
@@ -122,7 +120,6 @@ app.post('/api/auth/register', async (req, res) => {
 
     res.json({ user: newUser, token });
   } catch (err) {
-    console.error('Register error:', err);
     res.status(500).json({ error: 'Erreur lors de l\'inscription' });
   }
 });
@@ -161,12 +158,10 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
     res.json({ user: safeUser, token });
   } catch (err) {
-    console.error('Login error:', err);
     res.status(500).json({ error: 'Erreur lors de la connexion' });
   }
 });
 
-// Current User
 app.get('/api/auth/me', authenticateToken, async (req, res) => {
   try {
     const user = await db.get('SELECT id, username, display_name, avatar_url, bio, status FROM users WHERE id = ?', [req.user.id]);
@@ -177,7 +172,6 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
   }
 });
 
-// Update Profile
 app.post('/api/users/update', authenticateToken, async (req, res) => {
   const { display_name, bio, avatar_url } = req.body;
   try {
@@ -232,10 +226,7 @@ app.get('/api/users/search', authenticateToken, async (req, res) => {
 app.post('/api/contacts/add', authenticateToken, async (req, res) => {
   const { contact_user_id } = req.body;
   try {
-    await db.run(
-      `INSERT OR IGNORE INTO contacts (user_id, contact_user_id) VALUES (?, ?)`,
-      [req.user.id, contact_user_id]
-    );
+    await db.run(`INSERT OR IGNORE INTO contacts (user_id, contact_user_id) VALUES (?, ?)`, [req.user.id, contact_user_id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Erreur ajout contact' });
@@ -273,10 +264,7 @@ app.get('/api/channels/public', authenticateToken, async (req, res) => {
 app.post('/api/chats/:chatId/join', authenticateToken, async (req, res) => {
   const { chatId } = req.params;
   try {
-    await db.run(
-      `INSERT OR IGNORE INTO conversation_members (conversation_id, user_id) VALUES (?, ?)`,
-      [chatId, req.user.id]
-    );
+    await db.run(`INSERT OR IGNORE INTO conversation_members (conversation_id, user_id) VALUES (?, ?)`, [chatId, req.user.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Erreur adhésion' });
@@ -401,12 +389,13 @@ app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => 
 });
 
 // ----------------------------------------------------
-// SOCKET.IO REALTIME EVENTS
+// SOCKET.IO REALTIME & WEBRTC SIGNALING
 // ----------------------------------------------------
 
 io.on('connection', (socket) => {
   socket.on('user_connected', async (userId) => {
     socket.userId = userId;
+    socket.join(`user_${userId}`);
     if (userId && db) {
       await db.run('UPDATE users SET status = "online", last_seen = CURRENT_TIMESTAMP WHERE id = ?', [userId]);
       io.emit('user_status_changed', { userId, status: 'online' });
@@ -415,7 +404,6 @@ io.on('connection', (socket) => {
 
   socket.on('join_room', (chatId) => {
     socket.join(chatId);
-    // Auto-ensure user is member of general chat
     if (socket.userId && db) {
       db.run('INSERT OR IGNORE INTO conversation_members (conversation_id, user_id) VALUES (?, ?)', [chatId, socket.userId]);
     }
@@ -426,18 +414,7 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     const { conversation_id, sender_id, text, type, media_url, media_name, media_size } = data;
     
-    if (!conversation_id || !sender_id) {
-      return socket.emit('error_message', { error: 'Données de message incomplètes.' });
-    }
-
-    // Check channel posting permissions (except for general channel or groups or DMs)
-    const chat = await db.get('SELECT type, created_by FROM conversations WHERE id = ?', [conversation_id]);
-    if (chat && chat.type === 'channel' && conversation_id !== 'general') {
-      const member = await db.get('SELECT role FROM conversation_members WHERE conversation_id = ? AND user_id = ?', [conversation_id, sender_id]);
-      if (!member || (member.role !== 'owner' && member.role !== 'admin' && chat.created_by !== sender_id)) {
-        return socket.emit('error_message', { error: 'Seuls les administrateurs peuvent publier dans ce canal.' });
-      }
-    }
+    if (!conversation_id || !sender_id) return;
 
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
 
@@ -460,8 +437,44 @@ io.on('connection', (socket) => {
       io.emit('chat_updated', { conversation_id, last_message: savedMsg.text, last_message_at: savedMsg.created_at });
     } catch (err) {
       console.error('Send message socket error:', err);
-      socket.emit('error_message', { error: 'Erreur lors de l\'envoi du message.' });
     }
+  });
+
+  // Edit Message
+  socket.on('edit_message', async ({ message_id, conversation_id, text }) => {
+    try {
+      await db.run('UPDATE messages SET text = ? WHERE id = ?', [text, message_id]);
+      io.to(conversation_id).emit('message_edited', { message_id, text });
+    } catch (err) {
+      console.error('Edit error:', err);
+    }
+  });
+
+  // Delete Message
+  socket.on('delete_message', async ({ message_id, conversation_id }) => {
+    try {
+      await db.run('DELETE FROM messages WHERE id = ?', [message_id]);
+      io.to(conversation_id).emit('message_deleted', { message_id });
+    } catch (err) {
+      console.error('Delete error:', err);
+    }
+  });
+
+  // WebRTC Live Call Signaling
+  socket.on('call_user', ({ targetUserId, signalData, fromUser, isVideo }) => {
+    io.to(`user_${targetUserId}`).emit('incoming_call', { signalData, fromUser, isVideo });
+  });
+
+  socket.on('answer_call', ({ to, signalData }) => {
+    io.to(`user_${to}`).emit('call_accepted', signalData);
+  });
+
+  socket.on('ice_candidate', ({ to, candidate }) => {
+    io.to(`user_${to}`).emit('ice_candidate', candidate);
+  });
+
+  socket.on('end_call', ({ to }) => {
+    io.to(`user_${to}`).emit('call_ended');
   });
 
   socket.on('typing_start', ({ conversation_id, username, userId }) => {
@@ -503,14 +516,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// START
 initDb().then((database) => {
   db = database;
-  // Update general channel type to 'group' so all users can talk freely
   db.run("UPDATE conversations SET type = 'group' WHERE id = 'general'");
 
   server.listen(PORT, '0.0.0.0', async () => {
     const localIp = getLocalIp();
-    console.log(`\n🚀 DONOGRAM BACKEND RUNNING ON http://${localIp}:${PORT}\n`);
+    console.log(`\n🚀 DONOGRAM v3.0 ADVANCED BACKEND RUNNING ON http://${localIp}:${PORT}\n`);
   });
 }).catch((err) => console.error('DB error:', err));

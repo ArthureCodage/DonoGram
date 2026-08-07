@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Plus, QrCode, Settings, Volume2, Users, User } from 'lucide-react';
+import { Search, Plus, QrCode, Settings, Volume2, Users, User, Folder } from 'lucide-react';
 
 export default function Sidebar({
   currentUser,
@@ -12,10 +12,13 @@ export default function Sidebar({
   isHiddenMobile
 }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeFolder, setActiveFolder] = useState('all'); // 'all' | 'direct' | 'group' | 'channel'
 
-  const filteredChats = chats.filter(c =>
-    (c.name || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredChats = chats.filter(c => {
+    const matchesSearch = (c.name || '').toLowerCase().includes(searchQuery.toLowerCase());
+    if (activeFolder === 'all') return matchesSearch;
+    return matchesSearch && c.type === activeFolder;
+  });
 
   const formatTime = (dateStr) => {
     if (!dateStr) return '';
@@ -35,14 +38,14 @@ export default function Sidebar({
 
   return (
     <aside className={`sidebar ${isHiddenMobile ? 'hidden-mobile' : ''}`} style={{
-      width: '320px',
+      width: '340px',
       backgroundColor: 'var(--bg-sidebar)',
       borderRight: '1px solid var(--border-color)',
       display: 'flex',
       flexDirection: 'column',
       height: '100%'
     }}>
-      {/* Header User Bar with iOS Safe Area Top padding */}
+      {/* Header User Bar */}
       <div style={{
         padding: '0.85rem 1.25rem',
         paddingTop: 'calc(0.85rem + env(safe-area-inset-top, 0px))',
@@ -119,7 +122,7 @@ export default function Sidebar({
       </div>
 
       {/* Search Bar */}
-      <div style={{ padding: '0.75rem 1rem' }}>
+      <div style={{ padding: '0.75rem 1rem 0.5rem 1rem' }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -145,6 +148,41 @@ export default function Sidebar({
             }}
           />
         </div>
+      </div>
+
+      {/* Telegram Chat Folders Bar */}
+      <div style={{
+        display: 'flex',
+        padding: '0 0.85rem',
+        borderBottom: '1px solid var(--border-color)',
+        gap: '4px',
+        overflowX: 'auto',
+        marginBottom: '0.5rem'
+      }}>
+        {[
+          { id: 'all', label: 'Tous' },
+          { id: 'direct', label: 'Personnel' },
+          { id: 'group', label: 'Groupes' },
+          { id: 'channel', label: 'Canaux' }
+        ].map(f => (
+          <button
+            key={f.id}
+            onClick={() => setActiveFolder(f.id)}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: activeFolder === f.id ? '2px solid var(--accent)' : '2px solid transparent',
+              color: activeFolder === f.id ? 'var(--accent)' : 'var(--text-muted)',
+              padding: '0.55rem 0.75rem',
+              fontWeight: activeFolder === f.id ? 600 : 400,
+              fontSize: '0.82rem',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {f.label}
+          </button>
+        ))}
       </div>
 
       {/* Conversations List */}
