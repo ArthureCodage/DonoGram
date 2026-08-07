@@ -1,0 +1,16 @@
+{
+  "short_name": "DonoGram",
+  "name": "DonoGram Self-Hosted Messenger",
+  "icons": [
+    {
+      "src": "https://api.dicebear.com/7.x/bottts/svg?seed=DonoGramLogo",
+      "type": "image/svg+xml",
+      "sizes": "192x192 512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0e1621",
+  "theme_color": "#17212b",
+  "display": "standalone",
+  "orientation": "any"
+}
