@@ -12,7 +12,13 @@ const jwt = require('jsonwebtoken');
 const { initDb } = require('./db');
 
 const PORT = process.env.PORT || 4000;
-const JWT_SECRET = 'donogram_super_secret_jwt_key_2026';
+// Secret read from the environment. If unset, a random one is generated for this
+// process (sessions are then invalidated on every restart).
+let JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  JWT_SECRET = require('crypto').randomBytes(48).toString('hex');
+  console.warn('[auth] JWT_SECRET not set: using a random temporary secret. Set JWT_SECRET to keep sessions across restarts.');
+}
 
 const app = express();
 const server = http.createServer(app);
