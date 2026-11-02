@@ -42,7 +42,7 @@ Les fichiers envoyés sont rangés dans `server/uploads/`.
 
 Pour l'utiliser hors de ton réseau local, passe par un VPN comme [Tailscale](https://tailscale.com) plutôt que d'ouvrir un port.
 
-> ⚠️ Projet personnel : avant de l'exposer sur Internet, remplace la clé `JWT_SECRET` écrite dans `server/index.js` par une valeur secrète à toi.
+> ⚠️ Projet personnel : avant de l'exposer sur Internet, définis la variable d'environnement `JWT_SECRET` avec une valeur secrète à toi (par ex. `JWT_SECRET=<longue chaîne aléatoire> npm run dev`). Sans elle, un secret temporaire aléatoire est généré à chaque démarrage et les sessions sont invalidées au redémarrage.
 
 ## Stack
 
